@@ -430,6 +430,19 @@
                 </div>
               </div>
 
+              <!-- Recent Searches -->
+              <div id="recent-searches" class="recent-searches" style="display: none;">
+                <div class="recent-header">
+                  <h4><i class="fas fa-history"></i> Recent Searches</h4>
+                  <button class="btn-clear-all" onclick="clearAllRecentSearches()" title="Clear All">
+                    <i class="fas fa-trash-alt"></i> Clear All
+                  </button>
+                </div>
+                <div id="recent-searches-list" class="recent-list">
+                  <!-- Recent searches will be inserted here -->
+                </div>
+              </div>
+
               <!-- Transaction Hash Details Section -->
               <div id="hash-details-results" style="display: none;">
                 <div class="tx-details-card card">
@@ -601,6 +614,7 @@
     <script src="lib.hedera.js"></script>
     <script src="hederaCrypto.js"></script>
     <script src="hederaBlockchainAPI.js"></script>
+    <script src="hederaSearchDB.js"></script>
     
     <script>
         // Clear input helper
@@ -630,7 +644,7 @@
                 document.getElementById('hbar-privateKey').value = result.HBAR.privateKey;
                 
                 document.getElementById('generate-results').style.display = 'block';
-                showNotification('✅ New address generated!', 'success');
+                showNotification(' New address generated!', 'success');
             } catch (error) {
                 console.error('Error generating address:', error);
                 showNotification('❌ Error: ' + error.message, 'error');
@@ -650,10 +664,13 @@
             // Check if it's hex format or WIF format
             const hexOnly = /^[0-9a-fA-F]+$/.test(privateKey);
             const isValidHex = hexOnly && (privateKey.length === 64 || privateKey.length === 128);
-            const isValidWIF = !hexOnly && privateKey.length >= 50; // BTC/FLO WIF format
+            
+            // WIF format uses Base58 characters (no 0, O, I, l)
+            const base58Chars = /^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$/;
+            const isValidWIF = !hexOnly && base58Chars.test(privateKey) && privateKey.length >= 51 && privateKey.length <= 52;
             
             if (!isValidHex && !isValidWIF) {
-                showNotification('⚠️ Invalid private key format. Please enter either:\n- 64-character hex key (HBAR)\n- WIF format (BTC/FLO)', 'error');
+                showNotification('⚠️ Invalid private key format.', 'error');
                 return;
             }
 
@@ -674,7 +691,7 @@
                 document.getElementById('recover-hbar-privateKey').value = result.HBAR.privateKey;
                 
                 document.getElementById('recover-results').style.display = 'block';
-                showNotification('✅ Address recovered!', 'success');
+                showNotification(' Address recovered!', 'success');
             } catch (error) {
                 console.error('Error recovering address:', error);
                 showNotification('❌ Error: ' + error.message, 'error');
@@ -699,14 +716,14 @@
         function copyToClipboard(elementId) {
             const text = document.getElementById(elementId).textContent;
             navigator.clipboard.writeText(text).then(() => {
-                showNotification('✅ Copied!', 'success');
+                showNotification(' Copied!', 'success');
             });
         }
 
         function copyPrivateKey(elementId) {
             const text = document.getElementById(elementId).value;
             navigator.clipboard.writeText(text).then(() => {
-                showNotification('✅ Copied!', 'success');
+                showNotification(' Copied!', 'success');
             });
         }
 
@@ -834,6 +851,7 @@
         let allTransactions = [];
         let currentFilter = 'all';
         let currentSearchType = 'address';
+        let searchDB = new SearchedAddressDB(); // Initialize search database
         
         // Pagination state
         let currentPage = 1;
@@ -854,6 +872,12 @@
                 document.getElementById('address-search').style.display = 'block';
                 document.getElementById('hash-search').style.display = 'none';
                 document.getElementById('hash-details-results').style.display = 'none';
+                
+                // Show recent searches for address search
+                const recentSearches = document.getElementById('recent-searches');
+                if (recentSearches && recentSearches.querySelector('.recent-item')) {
+                    recentSearches.style.display = 'block';
+                }
             } else {
                 addressType.classList.remove('active');
                 hashType.classList.add('active');
@@ -864,6 +888,12 @@
                 document.getElementById('transactions-results').style.display = 'none';
                 document.getElementById('transactionFilterSection').style.display = 'none';
                 document.getElementById('tx-pagination').style.display = 'none';
+                
+                // Hide recent searches for transaction hash search
+                const recentSearches = document.getElementById('recent-searches');
+                if (recentSearches) {
+                    recentSearches.style.display = 'none';
+                }
                 
                 // Hide transaction list
                 const transactionList = document.getElementById('transaction-list');
@@ -904,6 +934,17 @@
             
             if (!hash) {
                 showNotification('⚠️ Please enter a transaction hash', 'warning');
+                return;
+            }
+
+
+            // Validate transaction hash format
+            const isHexHash = /^0x[a-fA-F0-9]{64,96}$/.test(hash); // EVM transaction hash (64 or 96 chars)
+            const isTransactionId = /^\d+\.\d+\.\d+@\d+\.\d+$/.test(hash); // Hedera transaction ID
+            const isTransactionIdAlt = /^\d+\.\d+\.\d+-\d+-\d+$/.test(hash); // Alternative format
+            
+            if (!isHexHash && !isTransactionId && !isTransactionIdAlt) {
+                showNotification('⚠️ Invalid transaction hash format. Expected:\n- Hex hash (0x...)\n- Transaction ID (0.0.xxxx@seconds.nanos)', 'error');
                 return;
             }
 
@@ -981,7 +1022,7 @@
                     document.getElementById('tx-transfers-section').style.display = 'none';
                 }
                 
-                showNotification('✅ Transaction details loaded!', 'success');
+                showNotification(' Transaction details loaded!', 'success');
             } catch (error) {
                 console.error('Error:', error);
                 showNotification('❌ Error: ' + error.message, 'error');
@@ -1002,6 +1043,7 @@
             }
 
             let address = input;
+            let sourceInfo = null; // Will store BTC/FLO addresses if derived from private key
             
             const searchBtn = document.getElementById('searchBtn');
             searchBtn.disabled = true;
@@ -1011,13 +1053,24 @@
                 // Check if input is a private key (hex or WIF format)
                 const hexOnly = /^[0-9a-fA-F]+$/.test(input);
                 const isHexKey = hexOnly && (input.length === 64 || input.length === 128);
-                const isWifKey = !hexOnly && input.length >= 51 && input.length <= 52;
+                
+                // WIF format uses Base58 characters (no 0, O, I, l)
+                const base58Chars = /^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$/;
+                const isWifKey = !hexOnly && base58Chars.test(input) && input.length >= 51 && input.length <= 52;
                 
                 if (isHexKey || isWifKey) {
-                    // It's a private key - derive the HBAR address
-                    showNotification('🔑 Deriving HBAR address from private key...', 'success');
+                    // It's a private key - derive all addresses
+                    showNotification('🔑 Deriving addresses from private key...', 'success');
                     const result = await hederaCrypto.generateMultiChain(input);
                     address = result.HBAR.address;
+                    
+                    // Store source info for multi-chain display
+                    sourceInfo = {
+                        privateKey: input,
+                        btcAddress: result.BTC.address,
+                        floAddress: result.FLO.address
+                    };
+                    
                     console.log('Derived HBAR address:', address);
                 } else {
                     // Validate as address
@@ -1114,6 +1167,18 @@
                     `;
                 }
                 
+                // Save to database after successful balance fetch
+                try {
+                    await searchDB.saveSearchedAddress(
+                        address,
+                        balanceData.balance,
+                        Date.now(),
+                        sourceInfo // Pass source info
+                    );
+                    await loadRecentSearches();
+                } catch (dbError) {
+                    console.error('Error saving to database:', dbError);
+                }
                 
             } catch (error) {
                 console.error('Error:', error);
@@ -1141,7 +1206,7 @@
             try {
                 const balanceData = await hederaAPI.getBalance(currentAddress);
                 document.getElementById('display-balance').textContent = balanceData.balance.toFixed(8) + ' HBAR';
-                showNotification('✅ Balance refreshed!', 'success');
+                showNotification(' Balance refreshed!', 'success');
             } catch (error) {
                 showNotification('❌ Error refreshing balance', 'error');
             } finally {
@@ -1269,7 +1334,7 @@
                 
                 displayTransactions(allTransactions);
                 
-                showNotification('✅ Loaded next page', 'success');
+                showNotification(' Loaded next page', 'success');
             } catch (error) {
                 console.error('Error loading next page:', error);
                 
@@ -1307,7 +1372,7 @@
                 
                 displayTransactions(allTransactions);
                 
-                showNotification('✅ Loaded previous page', 'success');
+                showNotification(' Loaded previous page', 'success');
             } catch (error) {
                 console.error('Error loading previous page:', error);
                 showNotification('❌ Error loading previous page', 'error');
@@ -1689,7 +1754,7 @@
                 document.getElementById('sendAmount').value = '';
                 document.getElementById('sender-address-display').style.display = 'none';
                 
-                showNotification('✅ Transaction sent successfully!', 'success');
+                showNotification(' Transaction sent successfully!', 'success');
             } catch (error) {
                 console.error('Error sending HBAR:', error);
                 
@@ -1759,7 +1824,145 @@
             document.getElementById('error-modal').style.display = 'none';
         }
 
-        // Clear input helper
+        // Load and display recent searches
+        async function loadRecentSearches() {
+            try {
+                const searches = await searchDB.getSearchedAddresses();
+                const listEl = document.getElementById('recent-searches-list');
+                const containerEl = document.getElementById('recent-searches');
+                
+                if (!listEl || !containerEl) return; // Elements don't exist yet
+                
+                if (searches.length === 0) {
+                    containerEl.style.display = 'none';
+                    return;
+                }
+                
+                containerEl.style.display = 'block';
+                listEl.innerHTML = '';
+                
+                searches.forEach(search => {
+                    const item = document.createElement('div');
+                    item.className = 'recent-item';
+                    item.setAttribute('data-current-address', search.hbarAddress);
+                    
+                    const shortAddr = search.hbarAddress.substring(0, 12) + '...' + search.hbarAddress.substring(search.hbarAddress.length - 8);
+                    const date = new Date(search.timestamp);
+                    const formattedDate = date.toLocaleDateString();
+                    
+                    item.innerHTML = `
+                        ${search.isFromPrivateKey ? `
+                        <div class="recent-chain-buttons">
+                            <button class="chain-btn active" onclick="showAddressForChain(${search.id}, 'HBAR', '${search.hbarAddress}')" title="HBAR">
+                                <svg class="chain-icon-svg" viewBox="700 650 1100 1200" fill="currentColor"><path d="M1758.12,1790.62H1599.38V1453.13H900.62v337.49H741.87V696.25H900.62v329.37h698.76V696.25h158.75Zm-850-463.75h698.75V1152.5H908.12Z"/></svg>
+                            </button>
+                            <button class="chain-btn" onclick="showAddressForChain(${search.id}, 'BTC', '${search.btcAddress}')" title="BTC">
+                                <i class="fab fa-bitcoin"></i>
+                            </button>
+                            <button class="chain-btn" onclick="showAddressForChain(${search.id}, 'FLO', '${search.floAddress}')" title="FLO">
+                                <i class="fas fa-spa"></i>
+                            </button>
+                        </div>
+                        ` : ''}
+                        <div class="recent-address" title="${search.hbarAddress}">
+                            ${shortAddr}
+                        </div>
+                        <div class="recent-bottom-row">
+                            <div class="recent-balance-row">
+                                <span class="recent-balance">${search.formattedBalance}</span>
+                                <span class="recent-date">• ${formattedDate}</span>
+                            </div>
+                            <div class="recent-actions">
+                                <button class="action-btn copy-recent-btn" title="Copy">
+                                    <i class="fas fa-copy"></i>
+                                </button>
+                                <button class="action-btn" onclick="recheckAddress('${search.hbarAddress}')" title="Recheck">
+                                    <i class="fas fa-sync-alt"></i>
+                                </button>
+                                <button class="action-btn" onclick="deleteRecentSearch(${search.id})" title="Delete">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    
+                    listEl.appendChild(item);
+                });
+                
+                // Add copy functionality
+                document.querySelectorAll('.copy-recent-btn').forEach(btn => {
+                    btn.addEventListener('click', function() {
+                        const recentItem = this.closest('.recent-item');
+                        const currentAddress = recentItem.getAttribute('data-current-address');
+                        copyAddress(currentAddress);
+                    });
+                });
+            } catch (error) {
+                console.error('Error loading recent searches:', error);
+            }
+        }
+
+        // Show address for different chain
+        function showAddressForChain(searchId, chain, address) {
+            event.target.closest('.recent-chain-buttons').querySelectorAll('.chain-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.closest('.chain-btn').classList.add('active');
+            
+            const recentItem = event.target.closest('.recent-item');
+            const addressEl = recentItem.querySelector('.recent-address');
+            const shortAddr = address.substring(0, 12) + '...' + address.substring(address.length - 8);
+            addressEl.textContent = shortAddr;
+            addressEl.title = address;
+            
+            recentItem.setAttribute('data-current-address', address);
+        }
+
+        // Recheck address
+        async function recheckAddress(address) {
+            document.getElementById('addressInput').value = address;
+            switchSearchType('address');
+            await searchAddress();
+        }
+
+        // Delete recent search
+        async function deleteRecentSearch(id) {
+            try {
+                await searchDB.deleteSearchedAddress(id);
+                await loadRecentSearches();
+                showNotification('Search deleted', 'success');
+            } catch (error) {
+                console.error('Error deleting search:', error);
+                showNotification('Error deleting search', 'error');
+            }
+        }
+
+        // Copy address to clipboard
+        function copyAddress(address) {
+            navigator.clipboard.writeText(address).then(() => {
+                showNotification('Address copied!', 'success');
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+                showNotification('Failed to copy address', 'error');
+            });
+        }
+
+        // Clear all recent searches
+        async function clearAllRecentSearches() {
+            if (!confirm('Are you sure you want to clear all recent searches?')) {
+                return;
+            }
+            try {
+                await searchDB.clearAllSearchedAddresses();
+                await loadRecentSearches();
+                showNotification('All searches cleared', 'success');
+            } catch (error) {
+                console.error('Error clearing searches:', error);
+                showNotification('Error clearing searches', 'error');
+            }
+        }
+
+        
 
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
@@ -1767,6 +1970,9 @@
             
             // Check for URL parameters and load content
             checkAndLoadFromURL();
+            
+            // Load recent searches
+            loadRecentSearches();
         });
 
         // Handle browser back/forward buttons
