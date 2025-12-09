@@ -290,7 +290,7 @@
   /**
    * Send HBAR using JSON-RPC Relay (EVM-compatible)
    * @param {string} fromPrivateKey - Sender's private key (hex format)
-   * @param {string} toAddress - Recipient's EVM address
+   * @param {string} toAddress - Recipient's EVM address (0x...) - Account IDs should be converted to EVM addresses before calling
    * @param {number} amount - Amount in HBAR
    * @param {string} memo - Optional memo
    * @returns {Promise<Object>} - Transaction result

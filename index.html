@@ -355,7 +355,7 @@
                         <i class="fas fa-times"></i>
                       </button>
                     </div>
-                    <div class="form-text">Enter an HBAR address or BTC/FLO/HBAR private key to view transactions</div>
+                    <div class="form-text">Enter EVM address, Account ID or BTC/FLO/HBAR private key to view transactions</div>
                   </div>
                 </div>
 
@@ -562,12 +562,12 @@
                 <div class="form-group">
                   <label for="recipientAddress"><i class="fas fa-user"></i> Recipient Address</label>
                   <div class="input-with-actions">
-                    <input type="text" id="recipientAddress" class="form-input" placeholder="Enter recipient's EVM address (0x...)" />
+                    <input type="text" id="recipientAddress" class="form-input" placeholder="Enter recipient's EVM address (0x...) or Account ID (0.0.xxxx)" />
                     <button type="button" class="input-action-btn clear-btn" onclick="clearInput('recipientAddress')">
                       <i class="fas fa-times"></i>
                     </button>
                   </div>
-                  <div class="form-text">EVM address format (0x...)</div>
+                  <div class="form-text">EVM address (0x...) or Account ID (0.0.xxxx)</div>
                 </div>
 
                 <div class="form-group">
@@ -1597,9 +1597,25 @@
                 return;
             }
             
-            if (!recipient.startsWith('0x') || recipient.length !== 42) {
-                showNotification('⚠️ Invalid recipient address. Expected EVM address (0x...)', 'error');
+            // Validate recipient address format (EVM or Account ID)
+            const validation = hederaAPI.validateAddress(recipient);
+            if (!validation.valid) {
+                showNotification('⚠️ Invalid recipient address. Expected EVM address (0x...) or Account ID (0.0.xxxx)', 'error');
                 return;
+            }
+            
+            // If Account ID is provided, convert it to EVM address
+            let recipientEvmAddress = recipient;
+            if (validation.type === 'accountId') {
+                try {
+                    showNotification('🔄 Converting Account ID to EVM address...', 'info');
+                    const accountData = await hederaAPI.getBalance(recipient);
+                    recipientEvmAddress = accountData.evmAddress;
+                    console.log(`Converted Account ID ${recipient} to EVM address ${recipientEvmAddress}`);
+                } catch (error) {
+                    showNotification('⚠️ Could not find account. Please verify the Account ID.', 'error');
+                    return;
+                }
             }
             
             if (!amount || amount <= 0) {
@@ -1608,10 +1624,10 @@
             }
             
             try {
-                // Check if recipient account exists
+                // Check if recipient account exists (using EVM address)
                 let recipientExists = false;
                 try {
-                    const recipientBalance = await hederaAPI.getBalance(recipient);
+                    const recipientBalance = await hederaAPI.getBalance(recipientEvmAddress);
                     recipientExists = true;
                     console.log('Recipient account exists with balance:', recipientBalance.balance);
                 } catch (error) {
@@ -1643,11 +1659,13 @@
                     const gasPrice = await web3.eth.getGasPrice();
                     console.log('Current gas price:', gasPrice, 'wei');
                     
-                    // Estimate gas for this transaction
-                    const amountInWei = web3.utils.toWei(amount.toString(), 'ether');
+                    // Estimate gas for this transaction (use EVM address)
+                    
+                    const amountString = amount.toFixed(18);
+                    const amountInWei = web3.utils.toWei(amountString, 'ether');
                     const estimatedGas = await web3.eth.estimateGas({
                         from: senderAddress,
-                        to: recipient,
+                        to: recipientEvmAddress,
                         value: amountInWei
                     });
                     console.log('Estimated gas units:', estimatedGas);
@@ -1678,12 +1696,12 @@
                     return;
                 }
                 
-                // Store pending transaction
+                // Store pending transaction (use EVM address)
                 const estimatedFee = estimatedGasFee;
                 pendingTx = {
                     privateKey: hexPrivateKey, // Use hex format for API
                     from: senderAddress,
-                    to: recipient,
+                    to: recipientEvmAddress, // Use EVM address for transaction
                     amount: amount,
                     fee: estimatedFee,
                     total: amount + estimatedFee
