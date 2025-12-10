@@ -212,7 +212,7 @@
                       <i class="fas fa-times"></i>
                     </button>
                   </div>
-                  <div class="form-text">Only private keys accepted</div>
+                  <div class="form-text">Only ECDSA private keys accepted</div>
                 </div>
 
                 <button id="recoverBtn" class="btn btn-primary btn-block" onclick="recoverWallet()">
@@ -1185,6 +1185,13 @@
             } catch (error) {
                 console.error('Error:', error);
                 showNotification('❌ Error: ' + error.message, 'error');
+                
+                // Update URL with address parameter 
+                const url = new URL(window.location);
+                url.searchParams.set('address', address);
+                url.searchParams.delete('hash');
+                url.searchParams.delete('txid');
+                window.history.pushState({}, '', url);
                 
                 // Display the searched address
                 document.getElementById('display-address').textContent = address;
