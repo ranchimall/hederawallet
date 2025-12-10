@@ -212,7 +212,7 @@
                       <i class="fas fa-times"></i>
                     </button>
                   </div>
-                  <div class="form-text">Only private keys accepted</div>
+                  <div class="form-text">Only ECDSA private keys accepted</div>
                 </div>
 
                 <button id="recoverBtn" class="btn btn-primary btn-block" onclick="recoverWallet()">
@@ -766,6 +766,8 @@
                         btn.innerHTML = '<i class="fas fa-wallet"></i> Generate';
                     } else if (btn.id === 'recoverBtn') {
                         btn.innerHTML = '<i class="fas fa-sync-alt"></i> Recover';
+                    } else if (btn.id === 'searchBtn') {
+                        btn.innerHTML = '<i class="fas fa-search"></i> Search';
                     }
                 }
             });
@@ -1183,7 +1185,24 @@
             } catch (error) {
                 console.error('Error:', error);
                 showNotification('❌ Error: ' + error.message, 'error');
-                document.getElementById('display-balance').textContent = 'Error loading balance';
+                
+                // Update URL with address parameter 
+                const url = new URL(window.location);
+                url.searchParams.set('address', address);
+                url.searchParams.delete('hash');
+                url.searchParams.delete('txid');
+                window.history.pushState({}, '', url);
+                
+                // Display the searched address
+                document.getElementById('display-address').textContent = address;
+                
+                // Check if it's an inactive account error
+                if (error.message.includes('not found') || error.message.includes('invalid')) {
+                    document.getElementById('display-balance').textContent = 'Address is inactive';
+                } else {
+                    document.getElementById('display-balance').textContent = 'Error loading balance';
+                }
+                
                 document.getElementById('transaction-list').innerHTML = `
                     <div style="text-align: center; padding: 2rem; color: var(--error);">
                         <i class="fas fa-exclamation-circle" style="font-size: 2rem;"></i>
@@ -1744,6 +1763,7 @@
             try {
                 // Save transaction data before closing modal
                 const txAmount = pendingTx.amount;
+                const txFrom = pendingTx.from;
                 const txTo = pendingTx.to;
                 
                 // Send transaction (no memo)
@@ -1755,10 +1775,11 @@
                 // Store explorer URL globally
                 window.currentExplorerUrl = result.explorerUrl;
                 
-                // Show success modal
+                // Show success modal with full addresses
                 document.getElementById('success-txhash').textContent = result.transactionHash;
                 document.getElementById('success-amount').textContent = txAmount.toFixed(8) + ' HBAR';
-                document.getElementById('success-to').textContent = txTo.substring(0, 12) + '...' + txTo.substring(34);
+                document.getElementById('success-from').textContent = txFrom;
+                document.getElementById('success-to').textContent = txTo;
                 document.getElementById('success-gas').textContent = result.gasUsed;
                 document.getElementById('success-modal').style.display = 'flex';
                 
@@ -2134,8 +2155,22 @@
                         <span class="success-value" id="success-amount">0.00000000 HBAR</span>
                     </div>
                     <div class="success-row">
+                        <span class="success-label">From:</span>
+                        <div class="tx-id-wrapper">
+                            <code id="success-from">-</code>
+                            <button class="input-action-btn clear-btn" onclick="copyToClipboard('success-from')">
+                                <i class="fa-regular fa-copy"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="success-row">
                         <span class="success-label">To:</span>
-                        <span class="success-value" id="success-to">-</span>
+                        <div class="tx-id-wrapper">
+                            <code id="success-to">-</code>
+                            <button class="input-action-btn clear-btn" onclick="copyToClipboard('success-to')">
+                                <i class="fa-regular fa-copy"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="success-row">
                         <span class="success-label">Gas Used:</span>
