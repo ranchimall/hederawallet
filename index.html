@@ -1183,7 +1183,17 @@
             } catch (error) {
                 console.error('Error:', error);
                 showNotification('❌ Error: ' + error.message, 'error');
-                document.getElementById('display-balance').textContent = 'Error loading balance';
+                
+                // Display the searched address
+                document.getElementById('display-address').textContent = address;
+                
+                // Check if it's an inactive account error
+                if (error.message.includes('not found') || error.message.includes('invalid')) {
+                    document.getElementById('display-balance').textContent = 'Address is inactive';
+                } else {
+                    document.getElementById('display-balance').textContent = 'Error loading balance';
+                }
+                
                 document.getElementById('transaction-list').innerHTML = `
                     <div style="text-align: center; padding: 2rem; color: var(--error);">
                         <i class="fas fa-exclamation-circle" style="font-size: 2rem;"></i>
